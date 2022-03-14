@@ -1,19 +1,164 @@
-name: "Basic action template"
-description: "Checkout and scanning ..."
+name: "OneConnect ECS Deployment and Notification"
+description: "Deploying to Amazon ECS and Sending Notification ..."
 inputs:
-  target:
-    description: 'Parameter 1'
+  aws-region:
+    description: 'AWS Resource Region'
     required: true
 
+  aws-account-id:
+    description: 'AWS account id'
+    required: true
+
+  terraform-working-directory:
+    description: 'Terraform working directory'
+    required: true
+
+  terraform-state-bucket:
+    description: 'Bucket name of Terraform state'
+    required: true
+
+  terraform-state-key:
+    description: 'Key name of Terraform state'
+    required: true
+
+  image-tag:
+    description: 'Task definition file image tag'
+    required: true
+
+  variable-file:
+    description: 'Variable file path'
+    required: true
+
+  task-definition-file:
+    description: 'Task definition file'
+    required: true
+
+  service-name:
+    description: 'Name of service'
+    required: true
+
+  cluster-name:
+    description: 'Name of cluster'
+    required: true
+
+  wait-for-service-stability:
+    description: 'Wait for service stability'
+    required: true
+
+  is-codedeploy:
+    description: 'Wait for service stability'
+    required: false
+
+  codedeploy-appspec:
+    description: 'Codedeploy appspec file'
+    required: false
+
+  codedeploy-application:
+    description: 'Codedeploy application name'
+    required: false
+
+  codedeploy-deployment-group:
+    description: 'Codedeploy deployment group name'
+    required: false
+
+  notify-newrelic:
+    description: 'Notify newrelic'
+    required: false
+
+  newrelic-api-key:
+    description: 'Newrelic ali key'
+    required: false
+
+  newrelic-account-id:
+    description: 'Newrelic account id'
+    required: false
+
+  newrelic-application-id:
+    description: 'Newrelic application id'
+    required: false
+
+  notify-ms-team:
+    description: 'Notify Microsoft teams'
+    required: false
+
+  ms-teams-webhhok-uri:
+    description: 'Microsoft teams webhook URI'
+    required: false
+
+  ms-teams-notification-summary:
+    description: 'Microsoft teams notification summary'
+    required: false
+
+  github-token:
+    description: 'Github Token'
+    required: false
 
 runs:
   using: "composite"
   steps:
-    - name: Checkout repo
-      uses: actions/checkout@v2
-    - name: Provide a name for this template
-      uses: awazevr/basic-action-template@v1.0.0
-      with:
-        target: ${{ inputs.target }} 
+  - name: Checkout repo
+    uses: actions/checkout@v2
 
-    
+  - name: Configure AWS credentials
+    uses: aws-actions/configure-aws-credentials@master
+    with:
+      aws-region: ${{ inputs.aws-region }}
+      role-to-assume: arn:aws:iam::${{ inputs.aws-account-id }}:role/github
+  - run: aws sts get-caller-identity
+    shell: bash
+
+  - name: Set terraform version
+    uses: hashicorp/setup-terraform@v1
+
+  - name: Check Terraform fmt
+    run: terraform fmt -check
+    working-directory: ${{ inputs.terraform-working-directory }}
+    shell: bash
+
+  - name: Terraform init
+    run: terraform init -backend-config="region=${{ inputs.aws-region }}" -backend-config="bucket=${{ inputs.terraform-state-bucket }}" -backend-config="key=${{ inputs.terraform-state-key }}"
+    working-directory: ${{ inputs.terraform-working-directory }}
+    shell: bash
+
+  - name: Render task definition file
+    run: terraform apply -lock=false -auto-approve -parallelism=1 -var-file=${{ inputs.variable-file }} -var="image_tag=sha-${{ inputs.image-tag }}"
+    working-directory: ${{ inputs.terraform-working-directory }}
+    shell: bash
+
+  - name: Deploy to Amazon ECS
+    uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+    if: ${{ inputs.is-codedeploy != 'true' }}
+    with:
+      task-definition: ${{ inputs.task-definition-file }}
+      service: ${{ inputs.service-name }}
+      cluster: ${{ inputs.cluster-name }}
+      wait-for-service-stability: ${{ inputs.wait-for-service-stability }}
+
+  - name: Deploy to Amazon ECS Using Codedeploy
+    uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+    if: ${{ inputs.is-codedeploy == 'true' }}
+    with:
+      task-definition: ${{ inputs.task-definition-file }}
+      service: ${{ inputs.service-name }}
+      cluster: ${{ inputs.cluster-name }}
+      wait-for-service-stability: ${{ inputs.wait-for-service-stability }}
+      codedeploy-appspec: ${{ inputs.codedeploy-appspec }}
+      codedeploy-application: ${{ inputs.codedeploy-application }}
+      codedeploy-deployment-group: ${{ inputs.codedeploy-deployment-group }}
+
+  - name: Notify NewRelic of Deployment
+    uses: newrelic/deployment-marker-action@v1.0.0
+    if: ${{ inputs.notify-newrelic == 'true' }}
+    with:
+      apiKey: ${{ inputs.newrelic-api-key }}
+      accountId: ${{ inputs.newrelic-account-id }}
+      applicationId: ${{ inputs.newrelic-application-id }}
+      revision: "${{ inputs.image-tag }}"
+
+  - name: Notify Microsoft Teams of deployment
+    uses: jdcargile/ms-teams-notification@v1.3
+    if: ${{ inputs.notify-ms-team == 'true' }}
+    with:
+      github-token: ${{ inputs.github-token }}
+      ms-teams-webhook-uri: ${{ inputs.ms-teams-webhhok-uri }}
+      notification-summary: "${{ inputs.ms-teams-notification-summary }}"
