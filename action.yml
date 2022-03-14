@@ -1,0 +1,19 @@
+name: "Basic action template"
+description: "Checkout and scanning ..."
+inputs:
+  target:
+    description: 'Parameter 1'
+    required: true
+
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout repo
+      uses: actions/checkout@v2
+    - name: Provide a name for this template
+      uses: awazevr/basic-action-template@v1.0.0
+      with:
+        target: ${{ inputs.target }} 
+
+    
